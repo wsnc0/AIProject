@@ -1,0 +1,8 @@
+Task List:
+
+[ ] Splitting the dataset into Train / Validation / Test
+    [ ] Ratio of 80 : 10 : 10
+    [ ] Consider Saving Split data / processed data into another file/directory
+[ ] Data processing on the Training dataset 
+    [ ] Save Augmented Data into processedData directory
+[ ] 
