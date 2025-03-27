@@ -28,7 +28,7 @@ transform = transforms.Compose([
 ])
 
 
-path = './Dataset2'
+path = './data'
 # Load dataset from directory
 dataset = datasets.ImageFolder(root=path, transform=transform)
 print(dataset, len(dataset))
