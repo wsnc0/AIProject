@@ -1,8 +1,13 @@
 Task List:
 
 [ ] Splitting the dataset into Train / Validation / Test
-    [ ] Ratio of 80 : 10 : 10
-    [ ] Consider Saving Split data / processed data into another file/directory
+    [/] Ratio of 80 : 10 : 10
+    [/] Consider Saving Split data / processed data into another file/directory
 [ ] Data processing on the Training dataset 
     [ ] Save Augmented Data into processedData directory
-[ ] 
+[ ] Test out Model Training Methods
+    [ ] Mtd1 - 4 phases, progressive unlocking of layers
+        [ ] V1 - modelTesting1.ipynb
+        [ ] V2 - modelTesting2.ipynb
+    [ ] Mtd2 - Bulk unlocking of X layers to Train
+        [ ] V1 - modelTesting_1.ipynb
