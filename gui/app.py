@@ -17,6 +17,16 @@ st.set_page_config(
     layout="centered"
 )
 
+# Disable the default Streamlit top bar margin to make buttons look better
+st.markdown("""
+    <style>
+        div.stButton > button {
+            margin: 0 auto;
+            display: block;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 # Add custom CSS for Italiana font and button styles
 st.markdown("""
     <style>
@@ -164,8 +174,10 @@ if 'model_download_error' not in st.session_state:
 
 # Callback functions to handle button clicks
 def set_page_callback(page_name):
+    # Set the page immediately and rerun
     st.session_state.page = page_name
     st.session_state.button_clicked = True
+    st.rerun()  # Use st.rerun() for newer versions, or st.experimental_rerun() for older versions
 
 
 def restart_app_callback():
@@ -182,6 +194,7 @@ def restart_app_callback():
     st.session_state.button_clicked = True
     st.session_state.gemini_error = None
     st.session_state.model_download_error = None
+    st.rerun()  # Use st.rerun() for newer versions
 
 
 def process_image_callback():
@@ -192,6 +205,8 @@ def process_image_callback():
         st.session_state.button_clicked = True
         # Reset any previous errors
         st.session_state.model_download_error = None
+        # Force rerun to immediately update the page
+        st.rerun()
     else:
         st.error("No image available for analysis. Please upload an image first.")
 
@@ -232,10 +247,11 @@ def welcome_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # Start button
+    # Start button - properly centered
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.button("Start", key="start_btn", on_click=set_page_callback, args=('upload',), use_container_width=True)
+        if st.button("Start", key="start_btn", use_container_width=True):
+            set_page_callback('upload')
 
     # Footer
     st.markdown("<div style='position: fixed; bottom: 40px; width: 100%; text-align: center;'>", unsafe_allow_html=True)
@@ -272,7 +288,14 @@ def upload_page():
             # Display the uploaded image
             image = Image.open(uploaded_file)
             st.session_state.uploaded_image = image
-            preview_container.image(image, use_container_width=True)
+            
+            # Modified this line to handle older versions of Streamlit
+            # that don't support use_container_width
+            try:
+                preview_container.image(image, use_container_width=True)
+            except TypeError:
+                # Fallback for older streamlit versions
+                preview_container.image(image)
             
             # Show image details
             col1, col2 = st.columns(2)
@@ -282,12 +305,19 @@ def upload_page():
                 st.write(f"Image format: {image.format or 'JPEG'}")
             
             # Process image with the model when user clicks "Analyze Image"
-            st.button("Analyze Image", on_click=process_image_callback, use_container_width=True)
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col2:
+                if st.button("Analyze Image", use_container_width=True):
+                    process_image_callback()
+    
         except Exception as e:
             st.error(f"Error opening image: {e}")
     
-    # Add a back button
-    st.button("Back to Home", key="back_home_btn", on_click=restart_app_callback, use_container_width=True)
+    # Add a back button - centered
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("Back to Home", key="back_home_btn", use_container_width=True):
+            restart_app_callback()
 
 
 # Results page
@@ -348,16 +378,22 @@ def results_page():
                 st.error(st.session_state.model_download_error)
                 st.error(f"Error details: {error_msg}")
                 
-                # Add a button to return to the upload page
-                st.button("Try Again", key="error_back_btn", on_click=set_page_callback, args=('upload',), use_container_width=True)
+                # Add a button to return to the upload page - centered
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col2:
+                    if st.button("Try Again", key="error_back_btn", use_container_width=True):
+                        set_page_callback('upload')
                 
             except Exception as e:
                 st.error(f"Error during image analysis: {e}")
                 import traceback
                 st.code(traceback.format_exc())
                 
-                # Add a button to return to the upload page
-                st.button("Go Back", key="error_back_btn", on_click=set_page_callback, args=('upload',), use_container_width=True)
+                # Add a button to return to the upload page - centered
+                col1, col2, col3 = st.columns([1, 1, 1]) 
+                with col2:
+                    if st.button("Go Back", key="error_back_btn2", use_container_width=True):
+                        set_page_callback('upload')
     
     # Show specific error message for model download issues
     if st.session_state.model_download_error:
@@ -373,8 +409,11 @@ def results_page():
         </div>
         """, unsafe_allow_html=True)
         
-        # Add a button to retry
-        st.button("Try Again", key="retry_btn", on_click=process_image_callback, use_container_width=True)
+        # Add a button to retry - centered
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Try Again", key="retry_btn", use_container_width=True):
+                process_image_callback()
         
     # Once analysis is complete, display results
     elif st.session_state.analysis_complete and st.session_state.prediction and st.session_state.gradcam_overlay and st.session_state.gradcam_heatmap:
@@ -412,12 +451,20 @@ def results_page():
         
         with col1:
             st.subheader("Heatmap")
-            st.image(st.session_state.gradcam_heatmap, use_container_width=True)
+            # Modified to handle older versions of Streamlit
+            try:
+                st.image(st.session_state.gradcam_heatmap, use_container_width=True)
+            except TypeError:
+                st.image(st.session_state.gradcam_heatmap)
             st.markdown("<p class='image-caption'>Areas the AI focused on for prediction. Red indicates regions of high importance.</p>", unsafe_allow_html=True)
             
         with col2:
             st.subheader("Overlay")
-            st.image(st.session_state.gradcam_overlay, use_container_width=True)
+            # Modified to handle older versions of Streamlit
+            try:
+                st.image(st.session_state.gradcam_overlay, use_container_width=True)
+            except TypeError:
+                st.image(st.session_state.gradcam_overlay)
             st.markdown("<p class='image-caption'>Relevant areas highlighted on the original image to show what influenced the diagnosis.</p>", unsafe_allow_html=True)
         
         # Display heatmap analysis only if we have one
@@ -438,16 +485,22 @@ def results_page():
         # Add empty space
         st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
-        # Add restart button (with added spacing)
+        # Add restart button (with added spacing) - centered
         st.markdown("<div class='button-spacing'></div>", unsafe_allow_html=True)
-        st.button("Start Over", key="restart_btn", on_click=restart_app_callback, use_container_width=True)
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("Start Over", key="restart_btn", use_container_width=True):
+                restart_app_callback()
     else:
         # Show error message if no prediction or image data is available
         if not st.session_state.uploaded_image and not st.session_state.model_download_error:
             st.error("No analysis results available. Please go back and upload an image.")
             
-            # Add a button to return to the upload page
-            st.button("Upload Another Image", key="back_to_upload", on_click=set_page_callback, args=('upload',), use_container_width=True)
+            # Add a button to return to the upload page - centered
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col2:
+                if st.button("Upload Another Image", key="back_to_upload", use_container_width=True):
+                    set_page_callback('upload')
 
 
 # Main app logic - determine which page to show
