@@ -42,3 +42,51 @@ Workflow:
         1. IF BAD: Modify/Reselect Model
         1. IF GOOD: Progressive Unfreezing of Params for deeper learning of features. 
 
+
+
+
+
+## Setup Instructions
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/wsnc0/AIProject.git
+cd AIProject/gui
+```
+
+### 2. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Run the Application
+```bash
+python -m streamlit run app.py
+```
+
+## Disclaimer
+First Run
+On first run, the application will automatically download the AI model (~185MB) from Google Drive.
+This may take a few minutes depending on your internet connection.
+
+
+## Using the Application
+### 1. Home Screen:
+Click the "Start" button to begin
+Toggle "Use Gemini AI for enhanced descriptions" if you want detailed condition information
+
+### 2. Upload Screen:
+Drag and drop or browse to select a skin condition image
+Click "Analyze Image" to process the upload
+
+### 3. Results Screen:
+View the predicted skin condition and confidence score
+Examine the GradCAM heatmap showing areas of interest
+Read the enhanced description of the condition (if Gemini AI is enabled)
+Click "Start Over" to analyze another image
+
+
+## Supported Skin Conditions
+The classifier can identify 10 different skin conditions:
+Eczema, Warts Molluscum, Melanoma, Atopic Dermatitis, Basal Cell Carcinoma, Melanocytic Nevi, Benign Keratosis, Psoriasis, Seborrheic Keratoses, Tinea Ringworm

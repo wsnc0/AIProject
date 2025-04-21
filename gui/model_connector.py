@@ -13,7 +13,7 @@ import requests
 import gdown  # Add this new import for Google Drive downloads
 
 # Debug flag - set to False to disable image saving
-SAVE_DEBUG_IMAGES = True
+SAVE_DEBUG_IMAGES = False
 
 # Add debug prints to help troubleshooting
 print("Loading model_connector.py")

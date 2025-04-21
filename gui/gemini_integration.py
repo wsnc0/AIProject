@@ -1,8 +1,16 @@
 import google.generativeai as genai
 import os
+from dotenv import load_dotenv
 
-# Initialize the Gemini client with your API key
-genai.configure(api_key="AIzaSyDCDw2YmiMKIIPB2VNsrvdXPIdqFUxqk4I")
+# Load environment variables from .env file if it exists
+load_dotenv()
+
+# Get API key from environment variable with fallback to hardcoded key for users of your app
+# This way, you can use your own key from .env file, while others get the hardcoded key
+api_key = os.getenv("GEMINI_API_KEY", "AIzaSyDCDw2YmiMKIIPB2VNsrvdXPIdqFUxqk4I")
+
+# Initialize the Gemini client with the API key
+genai.configure(api_key=api_key)
 
 # Print available models at startup to help troubleshoot
 try:
