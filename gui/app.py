@@ -1,3 +1,6 @@
+# Key change: Modified the results page to show the original uploaded image
+# alongside the GradCAM heatmap and overlay images
+
 import streamlit as st
 import os
 import base64
@@ -446,21 +449,30 @@ def results_page():
             </div>
             """, unsafe_allow_html=True)
         
-        # Create two columns for the GradCAM images
-        col1, col2 = st.columns(2)
+        # Create three columns for the images (original, heatmap, overlay)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
+            st.subheader("Original Image")
+            # Display the original uploaded image
+            try:
+                st.image(st.session_state.uploaded_image, use_container_width=True)
+            except TypeError:
+                st.image(st.session_state.uploaded_image)
+            st.markdown("<p class='image-caption'>Original uploaded image.</p>", unsafe_allow_html=True)
+            
+        with col2:
             st.subheader("Heatmap")
-            # Modified to handle older versions of Streamlit
+            # Display the heatmap
             try:
                 st.image(st.session_state.gradcam_heatmap, use_container_width=True)
             except TypeError:
                 st.image(st.session_state.gradcam_heatmap)
             st.markdown("<p class='image-caption'>Areas the AI focused on for prediction. Red indicates regions of high importance.</p>", unsafe_allow_html=True)
             
-        with col2:
+        with col3:
             st.subheader("Overlay")
-            # Modified to handle older versions of Streamlit
+            # Display the overlay
             try:
                 st.image(st.session_state.gradcam_overlay, use_container_width=True)
             except TypeError:

@@ -10,7 +10,10 @@ import os
 import sys
 import datetime
 import requests
-import gdown  # Add this new import for Google Drive downloads
+import gdown
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for matplotlib
+import matplotlib.pyplot as plt
 
 # Debug flag - set to False to disable image saving
 SAVE_DEBUG_IMAGES = False
@@ -21,9 +24,9 @@ print(f"Current working directory: {os.getcwd()}")
 print(f"Python version: {sys.version}")
 print(f"PyTorch version: {torch.__version__}")
 
-# Google Drive model file ID - extracted from your shared link
-MODEL_FILE_ID = "1rY6XJTDIvn90ZheaQ1N7Hk4B8LqVkNDs"
-MODEL_FILENAME = "efficientnet_phase4_epoch6-3.pth"
+# Google Drive model file ID - from your shared link
+MODEL_FILE_ID = "1qPEB2qYfkWYbASdFAPi-dafjM2HEd5lY"
+MODEL_FILENAME = "best_model.pth"
 
 # Define classes for skin diseases
 DISEASE_CLASSES = [
@@ -158,74 +161,63 @@ def download_model_from_gdrive():
 
 # Define PadToSquare transform
 class PadToSquare:
-    def __call__(self, img):
-        w, h = img.size
-        max_side = max(w, h)
-        padding = (
-            (max_side - w) // 2,  # left
-            (max_side - h) // 2,  # top
-            (max_side - w + 1) // 2,  # right
-            (max_side - h + 1) // 2,  # bottom
+    def __call__(self, image):
+        w, h = image.size
+        max_dim = max(w, h)
+        pad_w = (max_dim - w) // 2
+        pad_h = (max_dim - h) // 2
+        return transforms.functional.pad(
+            image,
+            (pad_w, pad_h, max_dim - w - pad_w, max_dim - h - pad_h),
+            fill=0
         )
-        return transforms.functional.pad(img, padding, fill=0, padding_mode='constant')
 
-# Define image preprocessing transform
+# Define normalization stats (same as training)
 imagenet_mean = [0.485, 0.456, 0.406]
 imagenet_std = [0.229, 0.224, 0.225]
 
-# This matches your val_test_transform from the notebook
+# Define preprocessing transform that matches val_test_transform
 preprocess = transforms.Compose([
     PadToSquare(),
-    transforms.Resize((380, 380)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
 ])
 
-# Define model architecture
-class EfficientNetWithLSTM(nn.Module):
-    def __init__(self, hidden_dim=768, num_classes=10):
+# Define DenseNet model architecture - now simplified to ensure correct loading
+class DenseNetModel(nn.Module):
+    def __init__(self, num_classes=10):
         super().__init__()
         
-        # Important: use weights parameter for newer PyTorch versions
-        try:
-            self.backbone = models.efficientnet_b4(weights="IMAGENET1K_V1")
-        except TypeError:
-            # Fallback for older PyTorch versions
-            self.backbone = models.efficientnet_b4(pretrained=True)
-            
-        self.backbone.classifier = nn.Identity()
+        # Load base DenseNet model without pretrained weights first
+        self.densenet = models.densenet121()
         
-        self.lstm = nn.LSTM(
-            input_size=1792,  
-            hidden_size=hidden_dim,
-            num_layers=2,
-            bidirectional=True,
-            batch_first=True
-        )
+        # Get feature dimension
+        num_ftrs = self.densenet.classifier.in_features  # 1024 for DenseNet121
         
+        # Create custom classifier
         self.classifier = nn.Sequential(
-            nn.BatchNorm1d(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, 512),
-            nn.ReLU(),
+            nn.Linear(num_ftrs, 512),     # Hidden layer 1
             nn.BatchNorm1d(512),
-            nn.Dropout(0.5),
-            nn.Linear(512, 256),
             nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),          # Hidden layer 2
             nn.BatchNorm1d(256),
-            nn.Dropout(0.5),
-            nn.Linear(256, num_classes)
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),          # Hidden layer 3
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, num_classes)   # Final output layer
         )
+        
+        # Replace the classifier in densenet
+        self.densenet.classifier = self.classifier
     
     def forward(self, x):
-        # x shape: [B, 3, 380, 380]
-        feats = self.backbone.features(x)  # [B, 1792, H, W]
-        B, C, H, W = feats.size()
-        feats = feats.view(B, C, -1).permute(0, 2, 1)  # [B, H*W, 1792]
-        
-        lstm_out, _ = self.lstm(feats)  # [B, H*W, 2*hidden_dim]
-        pooled = lstm_out.mean(dim=1)  # [B, 2*hidden_dim]
-        
-        return self.classifier(pooled)
+        # Use the built-in forward method
+        return self.densenet(x)
 
 # Initialize model to None (it will be loaded when needed)
 model = None
@@ -243,149 +235,224 @@ def find_model_file():
     print(f"Found model files: {model_files}")
     return model_files[0] if model_files else None
 
+def inspect_model_structure(model_path):
+    """Inspect the structure of the saved model to help with debugging"""
+    try:
+        state_dict = torch.load(model_path, map_location=device)
+        print(f"Model file contains {len(state_dict)} parameters")
+        
+        # Print some key information
+        keys = list(state_dict.keys())
+        print(f"First 10 keys: {keys[:10]}")
+        
+        # Check for common prefixes
+        prefixes = set()
+        for key in keys:
+            parts = key.split('.')
+            if len(parts) > 1:
+                prefixes.add(parts[0])
+        
+        print(f"Key prefixes in state dict: {prefixes}")
+        
+        # Count key types
+        feature_keys = sum(1 for k in keys if 'features' in k)
+        classifier_keys = sum(1 for k in keys if 'classifier' in k)
+        
+        print(f"Feature keys: {feature_keys}")
+        print(f"Classifier keys: {classifier_keys}")
+        
+        # Return useful information
+        return {
+            'total_params': len(state_dict),
+            'prefixes': prefixes,
+            'feature_keys': feature_keys,
+            'classifier_keys': classifier_keys,
+            'first_keys': keys[:10]
+        }
+    except Exception as e:
+        print(f"Error inspecting model: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def load_model():
-    """Load the model if it's not already loaded"""
+    """Load the model if it's not already loaded with improved error handling"""
     global model
     
     if model is None:
         try:
-            print("Creating model architecture...")
-            model = EfficientNetWithLSTM(num_classes=len(DISEASE_CLASSES)).to(device)
-            print(f"Model architecture created with {len(DISEASE_CLASSES)} classes")
+            print("Creating DenseNetModel architecture...")
             
+            # Try to find a local model file first
             model_path = None
-            
-            # First, try to find model file locally
             local_model = find_model_file()
+            
             if local_model and os.path.exists(local_model):
                 print(f"Found existing model file: {local_model}")
                 model_path = local_model
+                
+                # Inspect the model structure to help with debugging
+                print("Inspecting model structure...")
+                model_info = inspect_model_structure(model_path)
+                
+                if model_info and 'prefixes' in model_info:
+                    print(f"Model has prefixes: {model_info['prefixes']}")
             else:
-                # Try to download model from Google Drive if not available locally
-                print("No local model found, attempting to download from Google Drive...")
+                # Try to download model if not found locally
+                print("No local model found. Attempting to download...")
                 try:
                     model_path = download_model_from_gdrive()
+                    
+                    # Inspect downloaded model
+                    print("Inspecting downloaded model structure...")
+                    model_info = inspect_model_structure(model_path)
                 except Exception as download_err:
                     print(f"Failed to download model: {download_err}")
-                    raise FileNotFoundError(f"Could not download model: {str(download_err)}")
+                    raise FileNotFoundError(f"Could not download or find model: {str(download_err)}")
+            
+            # Create model instance
+            model = DenseNetModel(num_classes=len(DISEASE_CLASSES)).to(device)
+            print(f"DenseNetModel created with {len(DISEASE_CLASSES)} classes")
             
             if model_path and os.path.exists(model_path):
                 try:
-                    # Try to load the model weights
+                    # Load the model weights
                     print(f"Loading model weights from {model_path}...")
                     state_dict = torch.load(model_path, map_location=device)
-                    model.load_state_dict(state_dict)
-                    print(f"Successfully loaded model from {model_path}")
+                    
+                    # Print model keys and state dict keys for comparison
+                    model_keys = set(model.state_dict().keys())
+                    state_dict_keys = set(state_dict.keys())
+                    
+                    # Check for key mismatches
+                    missing_keys = model_keys - state_dict_keys
+                    extra_keys = state_dict_keys - model_keys
+                    
+                    print(f"Model has {len(model_keys)} parameters")
+                    print(f"State dict has {len(state_dict_keys)} parameters")
+                    
+                    if missing_keys:
+                        print(f"Missing {len(missing_keys)} keys in state dict")
+                        print(f"First few missing keys: {list(missing_keys)[:5]}")
+                    
+                    if extra_keys:
+                        print(f"Extra {len(extra_keys)} keys in state dict not in model")
+                        print(f"First few extra keys: {list(extra_keys)[:5]}")
+                    
+                    # Check if keys need remapping (common with DataParallel)
+                    if len(extra_keys) > 0 and all('module.' in k for k in extra_keys):
+                        print("State dict appears to be from DataParallel. Removing 'module.' prefix...")
+                        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+                    
+                    # Special handling for different key formats
+                    if 'densenet.' in list(model_keys)[0] and 'densenet.' not in list(state_dict_keys)[0]:
+                        print("Adding 'densenet.' prefix to state dict keys...")
+                        state_dict = {'densenet.' + k: v for k, v in state_dict.items()}
+                    
+                    # Load state dict with strict=False to allow partial loading
+                    model.load_state_dict(state_dict, strict=False)
+                    print("Successfully loaded model weights with strict=False")
+                    
                 except Exception as e:
                     print(f"Error loading model weights: {e}")
-                    print("Will try with strict=False...")
-                    try:
-                        model.load_state_dict(state_dict, strict=False)
-                        print("Successfully loaded with strict=False")
-                    except Exception as e2:
-                        print(f"Still failed with strict=False: {e2}")
-                        model = None
-                        raise FileNotFoundError(f"Could not load model weights: {str(e2)}")
+                    import traceback
+                    traceback.print_exc()
+                    raise FileNotFoundError(f"Could not load model weights: {str(e)}")
             else:
                 print(f"Model file not found and could not be downloaded.")
                 model = None
                 raise FileNotFoundError("Model file not found and could not be downloaded.")
                 
+            # Set model to evaluation mode
             model.eval()
             print("Model loaded successfully and set to evaluation mode")
         except Exception as e:
             print(f"Critical error creating model: {e}")
             model = None
+            import traceback
+            traceback.print_exc()
             raise e
-        print(f"Model successfully loaded from: {os.path.abspath(model_path)}")
+        
+        if model_path:
+            print(f"Model successfully loaded from: {os.path.abspath(model_path)}")
     
     return model
 
 # GradCAM implementation
 class GradCAM:
-    def __init__(self, model):
+    def __init__(self, model, target_layer=None):
         self.model = model
         self.model.eval()
-        
-        self.target_layer = model.backbone.features[-1]
-        self.gradients = None
+        # Use the last convolutional layer of DenseNet's last dense block
+        self.target_layer = target_layer or model.densenet.features.denseblock4.denselayer16.conv2
+
         self.activations = None
-        
-        self.handles = []
-        self.handles.append(self.target_layer.register_forward_hook(self.save_activation))
-        self.handles.append(self.target_layer.register_full_backward_hook(self.save_gradient))
-    
-    def save_activation(self, module, input, output):
-        self.activations = output.detach()
-    
-    def save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-    
+        self.gradients = None
+
+        self.handles = [
+            self.target_layer.register_forward_hook(self._save_activation),
+            self.target_layer.register_full_backward_hook(self._save_gradient)
+        ]
+
+    def _save_activation(self, module, input, output):
+        self.activations = output.detach().clone()
+
+    def _save_gradient(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0].detach().clone()
+
     def release(self):
-        # Remove hooks when done
-        for handle in self.handles:
-            handle.remove()
-    
+        for h in self.handles:
+            h.remove()
+
     def __call__(self, x, class_idx=None):
-        # Store original model mode
-        original_mode = self.model.training
-        
+        orig_mode = self.model.training
+
+        # Disable all in-place ReLUs
+        import torch.nn as nn
+        for m in self.model.modules():
+            if isinstance(m, nn.ReLU):
+                m.inplace = False
+
+        # Patch functional relu to avoid inplace
+        import torch.nn.functional as F
+        orig_frelu = F.relu
+        F.relu = lambda inp, inplace=True: orig_frelu(inp, inplace=False)
+
         try:
-            # Switch to train mode (required for RNN backward pass)
-            self.model.train()
-            
-            # Disable BatchNorm tracking (since using batch_size=1)
-            def set_bn_eval(module):
-                if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-                    module.eval()
-            self.model.apply(set_bn_eval)
-            
-            # Enable gradients
-            with torch.enable_grad():
-                x.requires_grad_()  # Enable gradients for input
-                
-                # Forward pass through the whole model to get predictions
-                model_output = self.model(x)
-                
-                if class_idx is None:
-                    # Use the predicted class if none is provided
-                    class_idx = torch.argmax(model_output, dim=1).item()
-                
-                # Create one-hot encoding for the target class
-                one_hot = torch.zeros_like(model_output)
-                one_hot[0, class_idx] = 1
-                
-                # Zero gradients
-                self.model.zero_grad()
-                model_output.backward(gradient=one_hot, retain_graph=True)
-                
-                # Get weights
-                # Global average pooling of gradients
-                weights = torch.mean(self.gradients, dim=(2, 3))
-                
-                # Create class activation map
-                batch_size, channels, height, width = self.activations.size()
-                cam = torch.zeros(height, width, dtype=torch.float32, device=x.device)
-                
-                # Weight the channels by corresponding gradients
-                for i, w in enumerate(weights[0]):
-                    cam += w * self.activations[0, i, :, :]
-                
-                # Apply ReLU to focus on features that have a positive influence
-                cam = F.relu(cam)
-                # Normalize
-                cam = cam - cam.min()
-                if cam.max() > 0:
-                    cam = cam / cam.max()
-                # Resize to input image size
-                cam = cam.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
-                cam = F.interpolate(cam, size=x.shape[2:], mode='bilinear', align_corners=False)
-                cam = cam.squeeze()
-            return cam.cpu().detach().numpy()
-        
+            def _bn_eval(m):
+                if isinstance(m, nn.modules.batchnorm._BatchNorm):
+                    m.eval()
+            self.model.apply(_bn_eval)
+
+            x = x.clone().requires_grad_(True)
+            out = self.model(x)
+
+            if class_idx is None:
+                class_idx = torch.argmax(out, dim=1).item()
+
+            one_hot = torch.zeros_like(out)
+            one_hot[0, class_idx] = 1
+            self.model.zero_grad()
+            out.backward(gradient=one_hot, retain_graph=True)
+
+            weights = torch.mean(self.gradients, dim=(2, 3))  # shape: [1, C]
+
+            cam = torch.zeros_like(self.activations[0, 0])
+            for i, w in enumerate(weights[0]):
+                cam += w * self.activations[0, i]
+
+            cam = F.relu(cam)
+            cam -= cam.min()
+            if cam.max() > 0:
+                cam /= cam.max()
+
+            cam = cam.unsqueeze(0).unsqueeze(0)
+            cam = F.interpolate(cam, size=x.shape[2:], mode='bilinear', align_corners=False)
+            return cam.squeeze().cpu().numpy()
+
         finally:
-            # Restore original model mode
-            self.model.train(original_mode)
+            F.relu = orig_frelu
+            self.model.train(orig_mode)
 
 def generate_gradcam_images(image_tensor, predicted_class=None):
     """Generate GradCAM visualization images - both heatmap and overlay"""
@@ -395,8 +462,12 @@ def generate_gradcam_images(image_tensor, predicted_class=None):
         
         model = load_model()
         
+        # Target the right layer based on your model architecture
+        target_layer = model.densenet.features.denseblock4.denselayer16.conv2
+        print(f"GradCAM targeting layer: {target_layer}")
+        
         # Create GradCAM instance
-        grad_cam = GradCAM(model)
+        grad_cam = GradCAM(model, target_layer=target_layer)
         
         # Get original image for display (before normalization)
         orig_img = image_tensor.squeeze().cpu().clone().detach()
@@ -411,7 +482,9 @@ def generate_gradcam_images(image_tensor, predicted_class=None):
                 print(f"Predicted class: {DISEASE_CLASSES[predicted_class]} with {confidence:.2%} confidence")
         
         # Generate CAM for predicted class
+        print(f"Generating GradCAM for class {predicted_class}")
         cam = grad_cam(image_tensor, predicted_class)
+        print(f"GradCAM generated with shape: {cam.shape}, min: {cam.min()}, max: {cam.max()}")
         
         # Release hooks
         grad_cam.release()
@@ -423,20 +496,17 @@ def generate_gradcam_images(image_tensor, predicted_class=None):
         img_np = img_np * np.array(imagenet_std) + np.array(imagenet_mean)
         img_np = np.clip(img_np, 0, 1)
         
-        # Create heatmap
-        heatmap = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB) / 255.0
+        # Make heatmap & overlay (using matplotlib colormap)
+        print("Creating heatmap from matplotlib's jet colormap...")
+        heatmap = plt.get_cmap('jet')(cam)[:, :, :3]  # H×W×3
         
-        # Resize heatmap to match image dimensions if needed
-        if heatmap.shape[:2] != img_np.shape[:2]:
-            heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
-        
-        # Overlay heatmap on original image
-        result = 0.6 * img_np + 0.4 * heatmap
-        result = result / result.max()
+        # Create overlay
+        print("Creating overlay...")
+        overlay = 0.6 * img_np + 0.4 * heatmap
+        overlay = overlay / np.maximum(overlay.max(), 1e-8)  # Avoid division by zero
         
         # Convert result to PIL Image (overlay)
-        result_img = Image.fromarray((result * 255).astype(np.uint8))
+        result_img = Image.fromarray((overlay * 255).astype(np.uint8))
         
         # Convert heatmap to PIL Image (standalone heatmap)
         heatmap_img = Image.fromarray((heatmap * 255).astype(np.uint8))
@@ -470,8 +540,8 @@ def preprocess_image(image):
         if image.mode != "RGB":
             image = image.convert("RGB")
             
-        # Apply preprocessing pipeline matching val_test_transform
-        img_tensor = preprocess(image).unsqueeze(0).to(device)  # shape: [1, 3, 380, 380]
+        # Apply preprocessing pipeline
+        img_tensor = preprocess(image).unsqueeze(0).to(device)  # shape: [1, 3, 224, 224]
         print(f"Image preprocessed successfully with shape: {img_tensor.shape}")
         return img_tensor
     except Exception as e:
@@ -559,3 +629,50 @@ def predict_skin_disease(image):
         import traceback
         traceback.print_exc()
         return "Error in classification", 0.0, None, None
+
+# Add a simple test function to check model loading and prediction
+def test_model_prediction(test_image_path=None):
+    """Test model loading and prediction with a sample image"""
+    try:
+        # Load the model
+        model = load_model()
+        if model is None:
+            print("Model loading failed")
+            return False
+        
+        # Use a test image, if provided
+        if test_image_path and os.path.exists(test_image_path):
+            print(f"Testing with image: {test_image_path}")
+            image = Image.open(test_image_path)
+        else:
+            # Create a simple test image if none provided
+            print("Creating test image...")
+            image = Image.new('RGB', (300, 300), color=(100, 150, 200))
+        
+        # Ensure image is RGB
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        
+        # Preprocess the image
+        img_tensor = preprocess_image(image)
+        
+        # Get prediction
+        model.eval()
+        with torch.no_grad():
+            output = model(img_tensor)
+            probs = torch.softmax(output, dim=1)
+            pred_idx = torch.argmax(probs, dim=1).item()
+            confidence = probs[0, pred_idx].item()
+        
+        print(f"Test prediction: {DISEASE_CLASSES[pred_idx]} with {confidence:.2%} confidence")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# If this file is run directly, test the model
+if __name__ == "__main__":
+    print("Running model test...")
+    test_model_prediction()
